@@ -64,4 +64,3 @@ The `screenshots/` folder contains:
 
 ## Technologies
 Solidity, Remix IDE, MetaMask, ethers.js v6, HTML, CSS, JavaScript.
-

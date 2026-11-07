@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple Voting dApp</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- ethers.js v6 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <img src="images/logo.svg" alt="dApp logo" />
+    <h1>Simple Voting dApp</h1>
+    <p class="sub">MG3012 – Blockchain Technology for Business | Sepolia Testnet</p>
+  </header>
+
+  <h2>About this dApp</h2>
+  <p>This is a blockchain-based voting system for Pakistan, built as the working version of my Assignment 1 idea. In many elections people doubt the final count, because paper forms can be lost or changed. Here every vote is recorded on the Sepolia blockchain, so nobody can secretly change it and anyone can check the result.</p>
+  <p>This page talks to a Solidity smart contract. Connect MetaMask, view candidates, and cast one vote per wallet.</p>
+  <ul>
+    <li>Owner adds candidates</li>
+    <li>Every wallet can vote only once</li>
+    <li>Results are stored on the blockchain and cannot be secretly changed</li>
+    <li>No real name or CNIC is stored, only the wallet address</li>
+  </ul>
+  <p>Useful links:
+    <a href="https://sepolia.etherscan.io" target="_blank">Sepolia Etherscan</a> |
+    <a href="https://metamask.io" target="_blank">MetaMask</a> |
+    <a href="https://remix.ethereum.org" target="_blank">Remix IDE</a>
+  </p>
+
+  <h2>1. Wallet</h2>
+  <button id="connectBtn">Connect MetaMask</button>
+  <div class="box" id="walletInfo">Not connected</div>
+
+  <h2>2. Candidates (Read)</h2>
+  <button id="loadBtn">Load Candidates</button>
+  <button id="winnerBtn">Show Current Leader</button>
+  <ol id="candidateList"></ol>
+  <div class="box" id="winnerInfo">Leader: –</div>
+
+  <h2>3. Add Candidate (Write – owner only)</h2>
+  <input type="text" id="candidateName" placeholder="e.g. Candidate A" />
+  <button id="addBtn">Add Candidate</button>
+
+  <h2>4. Vote (Write)</h2>
+  <input type="number" id="voteId" placeholder="Candidate number (0,1,2…)" min="0" />
+  <button id="voteBtn">Vote</button>
+
+  <h2>Transaction Status</h2>
+  <div class="box" id="status">Waiting for action…</div>
+
+  <footer>Built with Solidity, HTML, CSS, JavaScript and ethers.js</footer>
+</div>
+
+<script>
+  // ====== CHANGE THIS after deploying in Remix ======
+  const CONTRACT_ADDRESS = "0x87B7bCdF4868f9Ee72BF1ee0dAb9499012368dDe";
+  // ==================================================
+
+  const SEPOLIA_CHAIN_ID = 11155111n;
+
+  const ABI = [
+    "function owner() view returns (address)",
+    "function hasVoted(address) view returns (bool)",
+    "function addCandidate(string _name)",
+    "function vote(uint256 _candidateId)",
+    "function getCandidateCount() view returns (uint256)",
+    "function getCandidate(uint256 _id) view returns (string, uint256)",
+    "function getWinner() view returns (string, uint256)"
+  ];
+
+  let provider, signer, contract;
+
+  const statusBox = document.getElementById("status");
+
+  function showStatus(msg, type) {
+    statusBox.textContent = msg;
+    statusBox.className = "box " + (type || "");
+  }
+
+  // ---- Connect MetaMask ----
+  async function connectWallet() {
+    if (!window.ethereum) {
+      showStatus("MetaMask not found. Please install it.", "error");
+      return;
+    }
+    try {
+      provider = new ethers.BrowserProvider(window.ethereum);
+      await provider.send("eth_requestAccounts", []);
+      signer = await provider.getSigner();
+      const address = await signer.getAddress();
+      const network = await provider.getNetwork();
+
+      if (network.chainId !== SEPOLIA_CHAIN_ID) {
+        showStatus("Please switch MetaMask to the Sepolia network.", "error");
+        return;
+      }
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      const balance = ethers.formatEther(await provider.getBalance(address));
+      document.getElementById("walletInfo").textContent =
+        "Connected: " + address + " | Balance: " + Number(balance).toFixed(4) + " SepoliaETH";
+      showStatus("Wallet connected successfully.", "success");
+    } catch (err) {
+      showStatus("Connection failed: " + (err.shortMessage || err.message), "error");
+    }
+  }
+
+  function needWallet() {
+    if (!contract) {
+      showStatus("Please connect MetaMask first.", "error");
+      return true;
+    }
+    return false;
+  }
+
+  // ---- READ: load all candidates ----
+  async function loadCandidates() {
+    if (needWallet()) return;
+    try {
+      const count = Number(await contract.getCandidateCount());
+      const list = document.getElementById("candidateList");
+      list.innerHTML = "";
+      if (count === 0) {
+        list.innerHTML = "<li>No candidates yet.</li>";
+      }
+      for (let i = 0; i < count; i++) {
+        const [name, votes] = await contract.getCandidate(i);
+        const li = document.createElement("li");
+        li.textContent = "[" + i + "] " + name + " — " + votes.toString() + " votes";
+        list.appendChild(li);
+      }
+      showStatus("Candidates loaded: " + count, "success");
+    } catch (err) {
+      showStatus("Read failed: " + (err.shortMessage || err.message), "error");
+    }
+  }
+
+  // ---- READ: leader ----
+  async function showWinner() {
+    if (needWallet()) return;
+    try {
+      const [name, votes] = await contract.getWinner();
+      document.getElementById("winnerInfo").textContent =
+        "Leader: " + name + " (" + votes.toString() + " votes)";
+      showStatus("Leader fetched.", "success");
+    } catch (err) {
+      showStatus("Read failed: " + (err.shortMessage || err.message), "error");
+    }
+  }
+
+  // ---- WRITE helper ----
+  async function sendTx(txPromise, label) {
+    try {
+      showStatus(label + ": confirm in MetaMask…");
+      const tx = await txPromise;
+      showStatus("Transaction sent. Hash: " + tx.hash + " (waiting for confirmation…)");
+      const receipt = await tx.wait();
+      showStatus(
+        label + " confirmed in block " + receipt.blockNumber +
+        " | Hash: " + tx.hash, "success"
+      );
+      await loadCandidates();
+    } catch (err) {
+      showStatus(label + " failed: " + (err.reason || err.shortMessage || err.message), "error");
+    }
+  }
+
+  // ---- WRITE: add candidate ----
+  function addCandidate() {
+    if (needWallet()) return;
+    const name = document.getElementById("candidateName").value.trim();
+    if (!name) { showStatus("Enter a candidate name.", "error"); return; }
+    sendTx(contract.addCandidate(name), "Add candidate");
+  }
+
+  // ---- WRITE: vote ----
+  function castVote() {
+    if (needWallet()) return;
+    const id = document.getElementById("voteId").value;
+    if (id === "") { showStatus("Enter a candidate number.", "error"); return; }
+    sendTx(contract.vote(id), "Vote");
+  }
+
+  document.getElementById("connectBtn").addEventListener("click", connectWallet);
+  document.getElementById("loadBtn").addEventListener("click", loadCandidates);
+  document.getElementById("winnerBtn").addEventListener("click", showWinner);
+  document.getElementById("addBtn").addEventListener("click", addCandidate);
+  document.getElementById("voteBtn").addEventListener("click", castVote);
+</script>
+</body>
+</html>
